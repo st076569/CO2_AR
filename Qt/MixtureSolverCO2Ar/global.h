@@ -15,21 +15,25 @@
 // Настройка температурного диапазона
 #define T_MAX 5000.0
 #define T_MIN 200.0
-#define T_NUM 4801
-#define Y_NUM 201
+#define T_NUM 9601
+#define Y_NUM 401
 
 // Малые величины для оценки точности
 #define EPSILON 1e-10
 
 // Число итераций, положение разрыва, число Куранта
-#define RELATIVE_SHOCK_POSITION 0.62
-#define MAX_ITERATION_N 5000
+#define RELATIVE_SHOCK_POSITION 0.001
+#define MAX_ITERATION_N 20000
 #define CFL 0.9
 
-// Параметры сетки решателя (длина ячейки - возраст-я геометр-ая прогрессия)
+// Параметр химической добавки в смеси {0-He', 1-Ne', 2-Ar', 3-Kr, 4-Xe}
+#define ADMIXTURE 2
+
+// Параметры сетки решателя
 #define GRID_N 101
-#define GRID_L 0.2
-#define GRID_DX 0.25e-3
+#define GRID_L 0.5
+#define GRID_DELTA_0 2.0
+#define GRID_DELTA_1 1.0
 #define GRID_DEGREE 5
 
 // Постоянная Больцмана
@@ -102,10 +106,12 @@ public:
 public:
 
 
-    // Инициализация по умолчанию и для равновесного случая
+    // Инициализация по умолчанию и для равновесного и неравновесного случаев
     MacroParam();
     MacroParam(const double& p, const double& v, const double& t,
                const double& x_CO2);
+    MacroParam(const double& p, const double& v, const double& t,
+               const double& t12, const double& t3, const double& x_CO2);
 
     // Инициализация плотностей, зная {p, t, x_CO2 in [0, 1]}
     void computeRho(const double& x_CO2);

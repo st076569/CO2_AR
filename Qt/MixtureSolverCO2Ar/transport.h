@@ -245,6 +245,7 @@ public:
     virtual void compute(const MacroParam& param, const double& ev,
                          const double& e) = 0;
     virtual void compute(const MacroParam& param, const double& e) = 0;
+    virtual void compute(const double& e12, const double& e3) = 0;
 
     // Доступ к соответствующим полям
     const double& T12() const;
@@ -296,9 +297,10 @@ public:
     virtual void compute(const MacroParam& param, const double& ev,
                          const double& e);
     virtual void compute(const MacroParam& param, const double& e);
+    virtual void compute(const double& e12, const double& e3);
 
     // Запись таблиц в файл
-    void writeToFile(const QString& name, const int& nT, const int& nY);
+    void writeToFile(const QString& name);
 };
 
 /// BracketIntegrals - основной родительский класс, содержит результаты
@@ -420,7 +422,8 @@ public:
     void initialize();
 
     // Расчет всех значений
-    virtual void compute(const MacroParam& param) = 0;
+    virtual void compute(const MacroParam& param, const int& useBVisc,
+                         const int& useDiff) = 0;
 
     // Доступ к соответствующим полям
     const double& sViscosity() const;
@@ -490,7 +493,8 @@ public:
     void initialize();
 
     // Расчет всех значений
-    virtual void compute(const MacroParam& param);
+    virtual void compute(const MacroParam& param, const int& useBVisc,
+                         const int& useDiff);
     const SpecificHeat& heat() const;
     const BracketIntegrals& bracket() const;
 };
@@ -516,8 +520,10 @@ protected:
     QVector<double> diffV_v;
     QVector<double> d_v;
 
-    // Вектор поточных членов
+    // Вектор поточных членов (конвективная и диффузная составляющие)
     QVector<double> flow_v;
+    QVector<double> cFlow_v;
+    QVector<double> dFlow_v;
 
 public:
 
@@ -547,6 +553,8 @@ public:
     const QVector<double>& diffV() const;
     const QVector<double>& d() const;
     const QVector<double>& flow() const;
+    const QVector<double>& cFlow() const;
+    const QVector<double>& dFlow() const;
 };
 
 /// FlowMembersDc (Direct Computation) - дочерний класс, производит расчет
@@ -569,8 +577,7 @@ protected:
     void computeTDiffQ(const MacroParam& param);
     void computeFullQ(const double& dT_dx, const double& dT12_dx,
                       const double& dT3_dx);
-    void computeXxP(const MacroParam& param, const double& dv_dx,
-                    const int& useBVisc);
+    void computeXxP(const MacroParam& param, const double& dv_dx);
 
 public:
 

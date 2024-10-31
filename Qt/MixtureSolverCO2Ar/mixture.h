@@ -78,14 +78,10 @@ public:
 
     void initialize(const MacroParam& lP, const int& numT = 3,
                     const int& useBVisc = 1, const int& useDiffV = 1);
-    void initialize(const QString& name);
+    void initialize(const QString& name, const double& init_dx);
     void solve();
 
     QVector<QVector<double>> saveMacroParams();
-    QVector<QVector<double>> saveU();
-    QVector<QVector<double>> saveF();
-    QVector<QVector<double>> saveHlleF();
-    QVector<QVector<double>> saveR();
 
 private:
 
@@ -93,6 +89,7 @@ private:
     QMutex mutex;
     QVector<int> parN_v, parN1_v;
     TemperatureNDc computeT;
+    BorderCondition bc;
     int model, useBVisc, useDiffV;
 
     // Все макропараметры течения во всех точках
@@ -100,13 +97,16 @@ private:
 
     // Скорость звука, показатель адиабаты, длины ячеек...
     QVector<double> a, k, dx, freeLength;
-    QVector<double> diffV, trQ, vQ12, vQ3, diffQ, tDiffQ, sVisc, bVisc, xxP;
+    QVector<double> trQ, vQ12, vQ3, diffQ, tDiffQ, sVisc, bVisc, xxP;
+    QVector<double> eFull, eT12, eT3;
+    QVector<double> diffVCO2, diffVAr, diffCO2, diffAr, diffCO2Ar, tDiffCO2, tDiffAr;
+    QVector<double> lambdaRot, lambdaTr, lambdaT12, lambdaT3;
 
     // Консервативные переменные, поточные члены, релаксационные члены
-    QVector<QVector<double>> U, F, R, tempU;
+    QVector<QVector<double>> U, F, cF, dF, R, tempU;
 
     // Значения потока на границах ячеек по методу HLLE
-    QVector<QVector<double>> hlleF;
+    QVector<QVector<double>> cHllF, dHllF;
 
 private:
 
@@ -118,6 +118,12 @@ private:
 
     // Расчет потоков на стыках ячеек методом HLLE
     void computeHlleF();
+
+    // Расчет потоков на стыках ячеек методом HLLС
+    void computeHllcF();
+
+    // Расчет потоков на стыках ячеек методом HLL
+    void computeHllF();
 
     // Производит один шаг итерационного процесса
     void step();
@@ -139,6 +145,63 @@ private:
 
     // Рассчитывает длину свободного пробега в каждой точке
     void updateFreeLength();
+
+    // Обновить правое граничное условие
+    void updateRightBC();
+};
+
+/// StaticCellCO2Ar - предоставляет инструменты для решения задачи о
+/// релаксационных процессах в статической адиабатической или
+/// изотермической ячейках
+class StaticCellCO2Ar
+{
+public:
+
+    // Шаг по времени, время моделирования
+    double dt, time;
+
+    // Хранит номер последней итерации
+    int currIter;
+
+public:
+
+    StaticCellCO2Ar();
+
+    void initialize(const MacroParam& point, const double& dt);
+    void initialize(const QString& name);
+    void solve();
+
+    QVector<QVector<double>> saveMacroParams();
+
+private:
+
+    // Вспомогательные структуры
+    TemperatureNDc computeT;
+
+    // Все макропараметры изотермической и адиабатической ячеек
+    MacroParam pointT, pointE;
+
+    // Консервативные переменные
+    QVector<double> UT, UE, RT, RE;
+
+    // Переменные для записи в файл
+    QVector<double> pT, TT, T12T, T3T;
+    QVector<double> pE, TE, T12E, T3E;
+
+private:
+
+    // Расчет релаксационных членов
+    void computeR();
+    QVector<double> computeR(const MacroParam& point);
+
+    // Производит один шаг итерационного процесса
+    void step();
+
+    // Возврат к макропараметрам Ui -> points
+    void updateMacroParam();
+
+    // Обновляет значения во временном масштабе
+    void updateTimeScale();
 };
 
 #endif // MIXTURECO2AR_H

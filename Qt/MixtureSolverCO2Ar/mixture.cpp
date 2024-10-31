@@ -123,11 +123,14 @@ MixtureCo2Ar::MixtureCo2Ar()
 {
     U.resize(SYSTEM_ORDER);
     F.resize(SYSTEM_ORDER);
+    cF.resize(SYSTEM_ORDER);
+    dF.resize(SYSTEM_ORDER);
     R.resize(SYSTEM_ORDER);
     tempU.resize(SYSTEM_ORDER);
-    hlleF.resize(SYSTEM_ORDER);
+    cHllF.resize(SYSTEM_ORDER);
+    dHllF.resize(SYSTEM_ORDER);
 }
-void MixtureCo2Ar::initialize(const QString& name)
+void MixtureCo2Ar::initialize(const QString& name, const double& init_dx)
 {
     // Повторное использование
     dt = 0.0;
@@ -140,16 +143,32 @@ void MixtureCo2Ar::initialize(const QString& name)
     {
         U[i].fill(0.0, GRID_N);
         F[i].fill(0.0, GRID_N);
+        cF[i].fill(0.0, GRID_N);
+        dF[i].fill(0.0, GRID_N);
         R[i].fill(0.0, GRID_N);
         tempU[i].fill(0.0, GRID_N);
-        hlleF[i].fill(0.0, GRID_N - 1);
+        cHllF[i].fill(0.0, GRID_N - 1);
+        dHllF[i].fill(0.0, GRID_N - 1);
     }
     points.resize(GRID_N);
     k.fill(0.0, GRID_N);
     a.fill(0.0, GRID_N);
     dx.fill(0.0, GRID_N);
     freeLength.fill(0.0, GRID_N);
-    diffV.fill(0.0, GRID_N);
+    diffVCO2.fill(0.0, GRID_N);
+    diffVAr.fill(0.0, GRID_N);
+    diffCO2.fill(0.0, GRID_N);
+    diffAr.fill(0.0, GRID_N);
+    diffCO2Ar.fill(0.0, GRID_N);
+    tDiffCO2.fill(0.0, GRID_N);
+    tDiffAr.fill(0.0, GRID_N);
+    lambdaTr.fill(0.0, GRID_N);
+    lambdaRot.fill(0.0, GRID_N);
+    lambdaT12.fill(0.0, GRID_N);
+    lambdaT3.fill(0.0, GRID_N);
+    eFull.fill(0.0, GRID_N);
+    eT12.fill(0.0, GRID_N);
+    eT3.fill(0.0, GRID_N);
     trQ.fill(0.0, GRID_N);
     vQ12.fill(0.0, GRID_N);
     vQ3.fill(0.0, GRID_N);
@@ -160,32 +179,13 @@ void MixtureCo2Ar::initialize(const QString& name)
     xxP.fill(0.0, GRID_N);
 
     // Инициализация массива длин ячеек
-    double alpha = (GRID_DEGREE + 1.0) * (GRID_L - GRID_N * GRID_DX) /
-            qPow(GRID_N * GRID_DX, GRID_DEGREE + 1.0);
+    double alpha = (GRID_DEGREE + 1.0) * (GRID_L - GRID_N * init_dx) /
+            qPow(GRID_N * init_dx, GRID_DEGREE + 1.0);
     for (int i = 0; i < GRID_N; i++)
     {
-        dx[i] = GRID_DX * (1.0 + alpha * qPow((i + 0.5) * GRID_DX,
+        dx[i] = init_dx * (1.0 + alpha * qPow((i + 0.5) * init_dx,
                                               GRID_DEGREE));
     }
-    /*
-    double alpha = (GRID_DEGREE + 1.0) * GRID_L /
-            qPow(GRID_N, (GRID_DEGREE + 1.0)) / GRID_DX;
-    for (int i = 0; i < GRID_N; i++)
-    {
-        dx[i] = GRID_DX * (1.0 + alpha * qPow(i, GRID_DEGREE));
-    }
-    dx[0] = GRID_Q / (qPow(1.0 + GRID_Q, GRID_N) - 1.0) * GRID_L;
-    for (int i = 1; i < GRID_N; i++)
-    {
-        dx[i] = (1.0 + GRID_Q) * dx[i - 1];
-    }
-    double q = 1.0 + 2.0 * (GRID_L - GRID_N * GRID_DX) / (GRID_N - 1.0) /
-            GRID_N / GRID_DX;
-    for (int i = 0; i < GRID_N; i++)
-    {
-        dx[i] = GRID_DX * qPow(q, i);
-    }
-    */
 
     // Подготовка векторов для распараллеливания
     for (int i = 0; i < GRID_N; i++)
@@ -205,7 +205,6 @@ void MixtureCo2Ar::initialize(const MacroParam& lP, const int& numT,
                               const int& useBVisc, const int& useDiffV)
 {
     // Расчет равновесных значений за УВ
-    BorderCondition bc;
     bc.compute(lP);
 
     // Повторное использование
@@ -260,7 +259,7 @@ void MixtureCo2Ar::solve()
     bar.initialize(MAX_ITERATION_N);
 
     // Осуществляем итерационный процесс
-    while (currIter < MAX_ITERATION_N) // && time < FINISH_TIME)
+    while (currIter < MAX_ITERATION_N)
     {
         // Обновляем показатель адиабаты, скорость звука, временной шаг
         updateAK();
@@ -268,13 +267,13 @@ void MixtureCo2Ar::solve()
 
         // Вычисляем вектор поточных и релаксационных членов + HLLE
         computeR();
-        // computeIntR();
         computeF();
-        computeHlleF();
+        //computeHlleF();
+        computeHllcF();
+        //computeHllF();
 
         // Обновляем вектор консервативных переменных
         step();
-        //filtrate();
 
         // Возврат к основным макропараметрам
         updateMacroParam();
@@ -282,7 +281,7 @@ void MixtureCo2Ar::solve()
         // Обновляем progress bar, счетчик и таймер
         bar.update(1.0);
         ++currIter;
-        // time += dt;
+        time += dt;
     }
     updateAK();
     findShockPos();
@@ -350,7 +349,10 @@ void MixtureCo2Ar::computeF()
         mutex.lock();
 
         // Вспомогательные выходные векторы для сбора статистики
-        diffV[i] = computer.diffV()[0];
+        eFull[i] = computer.energy().fullE();
+        eT12[i] = computer.energy().vE12();
+        eT3[i] = computer.energy().vE12();
+        diffVCO2[i] = computer.diffV()[0];
         trQ[i] = computer.trQ();
         vQ12[i] = computer.vQ12();
         vQ3[i] = computer.vQ3();
@@ -360,10 +362,25 @@ void MixtureCo2Ar::computeF()
         bVisc[i] = computer.transport().bViscosity();
         xxP[i] = computer.xxP();
 
+        // Пересчет условий нормировки
+        diffVCO2[i] = computer.diffV()[0];
+        diffVAr[i] = computer.diffV()[1];
+        diffCO2[i] = computer.transport().diffusion()[0][0];
+        diffAr[i] = computer.transport().diffusion()[1][1];
+        diffCO2Ar[i] = computer.transport().diffusion()[0][1];
+        tDiffCO2[i] = computer.transport().tDiffusion()[0];
+        tDiffAr[i] = computer.transport().tDiffusion()[1];
+        lambdaRot[i] = computer.transport().rLambda();
+        lambdaTr[i] = computer.transport().tLambda();
+        lambdaT12[i] = computer.transport().vLambdaT12();
+        lambdaT3[i] = computer.transport().vLambdaT3();
+
         // Заполняем вектор поточных членов
         for (int j = 0; j < SYSTEM_ORDER; ++j)
         {
             F[j][i] = computer.flow()[j];
+            cF[j][i] = computer.cFlow()[j];
+            dF[j][i] = computer.dFlow()[j];
         }
         mutex.unlock();
     };
@@ -377,7 +394,7 @@ void MixtureCo2Ar::computeHlleF()
     const std::function<void(int&)> calc = [this](int& i)
     {
         // Временные переменные
-        double f_hlle, f0, f1, u0, u1, a0, a1, v0, v1, rho0, rho1, avg_k;
+        double f_hlle, dF0, dF1, cF0, cF1, u0, u1, a0, a1, v0, v1, rho0, rho1;
         double b0, b1, eta, avg_a, avg_v;
 
         // Забираем известные макропараметры в (.)-ах [i], [i+1]
@@ -388,7 +405,6 @@ void MixtureCo2Ar::computeHlleF()
         v1 = points[i + 1].v;
         rho0 = qSqrt(points[i].rho[0] + points[i].rho[1]);
         rho1 = qSqrt(points[i + 1].rho[0] + points[i + 1].rho[1]);
-        avg_k = 0.5 * (k[i] + k[i + 1]);
         mutex.unlock();
 
         // Проходим по всем строкам вектора (уравнениям системы)
@@ -396,18 +412,16 @@ void MixtureCo2Ar::computeHlleF()
         {
             // Забираем известные макропараметры в (.)-ах [i], [i+1]
             mutex.lock();
-            f0 = F[j][i];
-            f1 = F[j][i + 1];
+            dF0 = dF[j][i];
+            dF1 = dF[j][i + 1];
+            cF0 = cF[j][i];
+            cF1 = cF[j][i + 1];
             u0 = U[j][i];
             u1 = U[j][i + 1];
             mutex.unlock();
 
-            // Находим квазивекторы
-            //u0 = f0 / v0;
-            //u1 = f1 / v1;
-
             // Расчитываем сигнальные скорости
-            eta = 0.5 * (avg_k - 1.0) * rho0 * rho1 / qPow(rho0 + rho1, 2.0);
+            eta = 0.5 * rho0 * rho1 / qPow(rho0 + rho1, 2.0);
             avg_a = qSqrt((rho0 * a0 + rho1 * a1) / (rho0 + rho1) +
                           eta * qPow(v1 - v0, 2.0));
             avg_v = (rho0 * v0 + rho1 * v1) / (rho0 + rho1);
@@ -415,14 +429,164 @@ void MixtureCo2Ar::computeHlleF()
             // Расчет потока на стыке ячеек
             b0 = qMin(avg_v - avg_a, 0.0);
             b1 = qMax(avg_v + avg_a, 0.0);
-            //b0 = qMin(qMin(v0 - a0, 0.0), v1 - a1);
-            //b1 = qMax(qMax(v0 + a0, 0.0), v1 + a1);
-            f_hlle = (b1 * f0 - b0 * f1 + b1 * b0 * (u1 - u0)) / (b1 - b0);
-            //f_hlle = 0.5 * (f0 + f1);
+            f_hlle = (b1 * cF0 - b0 * cF1 + b1 * b0 * (u1 - u0)) / (b1 - b0);
 
             // Обновляем значение [j] вектора поточных членов в (.) [i-1]
             mutex.lock();
-            hlleF[j][i] = f_hlle;
+            cHllF[j][i] = f_hlle;
+            dHllF[j][i] = (dF1 + dF0) / 2.0;
+            mutex.unlock();
+        }
+    };
+    futureWatcher.setFuture(QtConcurrent::map(parN1_v, calc));
+    futureWatcher.waitForFinished();
+}
+
+void MixtureCo2Ar::computeHllcF()
+{
+    QFutureWatcher<void> futureWatcher;
+    const std::function<void(int&)> calc = [this](int& i)
+    {
+        // Временные переменные
+        double fHllc, cFL, cFR, uL, uR, cUL, cUR, kL, kR, vL, vR, pL, pR, hL, hR;
+        double sL, sR, sC, avg_a, avg_v, avg_h, rhoL, rhoR, rho0, rho1, bL, bR;
+
+        // Забираем известные макропараметры в (.)-ах [i], [i+1]
+        mutex.lock();
+        kL = qPow(k[i], 2.0);
+        kR = qPow(k[i + 1], 2.0);
+        vL = points[i].v;
+        vR = points[i + 1].v;
+        rhoL = points[i].rho[0] + points[i].rho[1];
+        rhoR = points[i + 1].rho[0] + points[i + 1].rho[1];
+        pL = points[i].p;
+        pR = points[i + 1].p;
+        hL = (U[3][i] + pL) / rhoL;
+        hR = (U[3][i + 1] + pR) / rhoR;
+        mutex.unlock();
+
+        // Расчитываем сигнальные скорости
+        rho0 = qSqrt(rhoL);
+        rho1 = qSqrt(rhoR);
+        avg_h = (rho0 * hL + rho1 * hR) / (rho0 + rho1);
+        avg_v = (rho0 * vL + rho1 * vR) / (rho0 + rho1);
+        avg_a = qSqrt((0.5 * (kL + kR) - 1.0) * (avg_h - 0.5 * avg_v * avg_v));
+        sL = avg_v - avg_a;
+        sR = avg_v + avg_a;
+        sC = (pR - pL + rhoL * vL * (sL - vL) - rhoR * vR * (sR - vR)) /
+                (rhoL * (sL - vL) - rhoR * (sR - vR));
+        bL = (sL - vL) / (sL - sC);
+        bR = (sR - vR) / (sR - sC);
+
+        // Проходим по всем строкам вектора (уравнениям системы)
+        for (int j = 0; j < SYSTEM_ORDER; ++j)
+        {
+            // Забираем известные макропараметры в (.)-ах [i], [i+1]
+            mutex.lock();
+            cFL = cF[j][i];
+            cFR = cF[j][i + 1];
+            uL = U[j][i];
+            uR = U[j][i + 1];
+            mutex.unlock();
+
+            // Обновляем значение вспомогательного вектора макропараметров
+            switch (j)
+            {
+                case 2:
+                    cUL = bL * rhoL * sC;
+                    cUR = bR * rhoR * sC;
+                    break;
+                case 3:
+                    cUL = bL * (uL + rhoL * (sC - vL) *
+                                (sC + pL / rhoL / (sL - vL)));
+                    cUR = bR * (uR + rhoR * (sC - vR) *
+                                (sC + pR / rhoR / (sR - vR)));
+                    break;
+                default:
+                    cUL = bL * uL;
+                    cUR = bR * uR;
+                    break;
+            }
+
+            // Находим поток [j] на стыке ячеек [i], [i + 1]
+            if (sL >= 0)
+            {
+                fHllc = cFL;
+            }
+            else if (sL <= 0 && sC >= 0)
+            {
+                fHllc = cFL + sL * (cUL - uL);
+            }
+            else if (sC <= 0 && sR >= 0)
+            {
+                fHllc = cFR + sR * (cUR - uR);
+            }
+            else if (sR <= 0)
+            {
+                fHllc = cFR;
+            }
+
+            // Обновляем значение [j] вектора поточных членов в (.) [i-1]
+            mutex.lock();
+            cHllF[j][i] = fHllc;
+            dHllF[j][i] = (dF[j][i + 1] + dF[j][i]) / 2.0;
+            mutex.unlock();
+        }
+    };
+    futureWatcher.setFuture(QtConcurrent::map(parN1_v, calc));
+    futureWatcher.waitForFinished();
+}
+
+void MixtureCo2Ar::computeHllF()
+{
+    QFutureWatcher<void> futureWatcher;
+    const std::function<void(int&)> calc = [this](int& i)
+    {
+        // Временные переменные
+        double fHll, cFL, cFR, uL, uR, kL, kR, vL, vR, pL, pR, hL, hR;
+        double avg_v, avg_a, avg_h, rhoL, rhoR, rho0, rho1, bL, bR;
+
+        // Забираем известные макропараметры в (.)-ах [i], [i+1]
+        mutex.lock();
+        kL = qPow(k[i], 2.0);
+        kR = qPow(k[i + 1], 2.0);
+        vL = points[i].v;
+        vR = points[i + 1].v;
+        pL = points[i].p;
+        pR = points[i + 1].p;
+        rhoL = points[i].rho[0] + points[i].rho[1];
+        rhoR = points[i + 1].rho[0] + points[i + 1].rho[1];
+        hL = (U[3][i] + pL) / rhoL;
+        hR = (U[3][i + 1] + pR) / rhoR;
+        mutex.unlock();
+
+        // Расчитываем сигнальные скорости
+        rho0 = qSqrt(rhoL);
+        rho1 = qSqrt(rhoR);
+        avg_h = (rho0 * hL + rho1 * hR) / (rho0 + rho1);
+        avg_v = (rho0 * vL + rho1 * vR) / (rho0 + rho1);
+        avg_a = qSqrt((0.5 * (kL + kR) - 1.0) * (avg_h - 0.5 * avg_v * avg_v));
+        bL = qMin(avg_v - avg_a, 0.0);
+        bR = qMax(avg_v + avg_a, 0.0);
+
+        // Проходим по всем строкам вектора (уравнениям системы)
+        for (int j = 0; j < SYSTEM_ORDER; ++j)
+        {
+            // Забираем известные макропараметры в (.)-ах [i], [i+1]
+            mutex.lock();
+            cFL = cF[j][i];
+            cFR = cF[j][i + 1];
+            uL = U[j][i];
+            uR = U[j][i + 1];
+            mutex.unlock();
+
+            // Расчет потока на стыке ячеек
+            fHll = (bR * cFL - bL * cFR + bR * bL * (uR - uL)) / (bR - bL);
+
+            // Обновляем значение [j] вектора поточных членов в (.) [i-1]
+            mutex.lock();
+            cHllF[j][i] = fHll;
+            dHllF[j][i] = (dF[j][i + 1] + dF[j][i]) / 2.0;
             mutex.unlock();
         }
     };
@@ -437,7 +601,8 @@ void MixtureCo2Ar::step()
     {
         for (int i = 1; i < GRID_N - 1; ++i)
         {
-            U[j][i] += (R[j][i] - (hlleF[j][i] - hlleF[j][i - 1]) / dx[i]) * dt;
+            U[j][i] += (R[j][i] - (cHllF[j][i] - cHllF[j][i - 1] +
+                        dHllF[j][i] - dHllF[j][i - 1]) / dx[i]) * dt;
         }
     }
 }
@@ -670,38 +835,64 @@ QVector<QVector<double>> MixtureCo2Ar::saveMacroParams()
 
     // Подготовка таблицы
     QVector<QVector<double>> table;
-    table.resize(27);
+    table.resize(40);
 
     // Заполняем таблицу
     for (int i = 0; i < GRID_N; ++i)
     {
+        // Основные параметры
         table[0].push_back(0.0);
-        table[1].push_back(0.0);
-        table[2].push_back(dx[i]);
-        table[3].push_back(0.0);
-        table[4].push_back(points[i].rho[0] / Mixture::mass(0));
-        table[5].push_back(points[i].rho[1] / Mixture::mass(1));
-        table[6].push_back(points[i].rho[0]);
-        table[7].push_back(points[i].rho[1]);
-        table[8].push_back(points[i].p);
-        table[9].push_back(points[i].v);
-        table[10].push_back(points[i].t);
-        table[11].push_back(points[i].t12);
-        table[12].push_back(points[i].t3);
-        table[13].push_back(k[i]);
-        table[14].push_back(a[i]);
-        table[15].push_back(points[i].v / a[i]);
-        table[16].push_back(diffV[i]);
-        table[17].push_back(trQ[i]);
-        table[18].push_back(vQ12[i]);
-        table[19].push_back(vQ3[i]);
-        table[20].push_back(diffQ[i]);
-        table[21].push_back(tDiffQ[i]);
-        table[22].push_back(sVisc[i]);
-        table[23].push_back(bVisc[i]);
-        table[24].push_back(xxP[i]);
-        table[25].push_back(freeLength[i]);
-        table[26].push_back(dx[i] / freeLength[i]);
+        table[1].push_back(freeLength[i]);
+        table[2].push_back(0.0);
+        table[3].push_back(dx[i]);
+        table[4].push_back(dx[i] / freeLength[i]);
+        table[5].push_back(0.0);
+        table[6].push_back(points[i].rho[0] / Mixture::mass(0));
+        table[7].push_back(points[i].rho[1] / Mixture::mass(1));
+        table[8].push_back(points[i].rho[0]);
+        table[9].push_back(points[i].rho[1]);
+        table[10].push_back(points[i].p);
+        table[11].push_back(points[i].v);
+        table[12].push_back(points[i].t);
+        table[13].push_back(points[i].t12);
+        table[14].push_back(points[i].t3);
+        table[15].push_back(k[i]);
+        table[16].push_back(a[i]);
+        table[17].push_back(points[i].v / a[i]);
+
+        // Скорости диффузии
+        table[18].push_back(diffVCO2[i]);
+        table[19].push_back(diffVAr[i]);
+
+        // Коэффициенты диффузии
+        table[20].push_back(diffCO2[i]);
+        table[21].push_back(diffAr[i]);
+        table[22].push_back(diffCO2Ar[i]);
+
+        // Коэффициенты термодиффузии
+        table[23].push_back(tDiffCO2[i]);
+        table[24].push_back(tDiffAr[i]);
+
+        // Коэффициенты теплопроводности
+        table[25].push_back(lambdaTr[i]);
+        table[26].push_back(lambdaRot[i]);
+        table[27].push_back(lambdaT12[i]);
+        table[28].push_back(lambdaT3[i]);
+
+        // Тепловые потоки и остальное
+        table[29].push_back(trQ[i]);
+        table[30].push_back(vQ12[i]);
+        table[31].push_back(vQ3[i]);
+        table[32].push_back(diffQ[i]);
+        table[33].push_back(tDiffQ[i]);
+        table[34].push_back(sVisc[i]);
+        table[35].push_back(bVisc[i]);
+        table[36].push_back(xxP[i]);
+
+        // Энергия
+        table[37].push_back(eFull[i]);
+        table[38].push_back(eT12[i]);
+        table[39].push_back(eT3[i]);
     }
     for (int i = 1; i < GRID_N; ++i)
     {
@@ -711,49 +902,191 @@ QVector<QVector<double>> MixtureCo2Ar::saveMacroParams()
     for (int i = 0; i < GRID_N; ++i)
     {
         table[0][i] -= ds;
-        table[1][i] = table[0][i] / freeLength[0];
-        table[3][i] = table[4][i] / (table[4][i] + table[5][i]);
+        table[2][i] = table[0][i] / freeLength[0];
+        table[5][i] = table[6][i] / (table[6][i] + table[7][i]);
     }
     return table;
 }
 
-QVector<QVector<double>> MixtureCo2Ar::saveU()
+void MixtureCo2Ar::updateRightBC()
 {
-    QVector<QVector<double>> table;
-    for (int i = 0; i < SYSTEM_ORDER; ++i)
-    {
-        table.push_back(U[i]);
-    }
-    return table;
+    U[0][GRID_N - 1] = (bc.rP().rho[0] + bc.rP().rho[1]) /
+            (U[0][GRID_N - 2] + U[1][GRID_N - 2]) * U[0][GRID_N - 2];
+    U[1][GRID_N - 1] = bc.rP().rho[0] + bc.rP().rho[1] - U[0][GRID_N - 1];
 }
 
-QVector<QVector<double>> MixtureCo2Ar::saveF()
+///////////////////////////////////////////////////////////////////////////////
+/// class StaticCellCO2Ar
+///////////////////////////////////////////////////////////////////////////////
+
+StaticCellCO2Ar::StaticCellCO2Ar()
 {
-    QVector<QVector<double>> table;
-    for (int i = 0; i < SYSTEM_ORDER; ++i)
-    {
-        table.push_back(F[i]);
-    }
-    return table;
+    UT.fill(0.0, SYSTEM_ORDER);
+    UE.fill(0.0, SYSTEM_ORDER);
+    RT.fill(0.0, SYSTEM_ORDER);
+    RE.fill(0.0, SYSTEM_ORDER);
+    pT.fill(0.0, MAX_ITERATION_N);
+    TT.fill(0.0, MAX_ITERATION_N);
+    T12T.fill(0.0, MAX_ITERATION_N);
+    T3T.fill(0.0, MAX_ITERATION_N);
+    pE.fill(0.0, MAX_ITERATION_N);
+    TE.fill(0.0, MAX_ITERATION_N);
+    T12E.fill(0.0, MAX_ITERATION_N);
+    T3E.fill(0.0, MAX_ITERATION_N);
 }
 
-QVector<QVector<double>> MixtureCo2Ar::saveHlleF()
+void StaticCellCO2Ar::initialize(const MacroParam &point, const double &dt)
 {
-    QVector<QVector<double>> table;
-    for (int i = 0; i < SYSTEM_ORDER; ++i)
-    {
-        table.push_back(hlleF[i]);
-    }
-    return table;
+    // Повторное использование
+    this->dt = dt;
+    time = 0.0;
+    currIter = 0;
+
+    // Расчет энергий
+    EnergyDc E;
+    E.initialize();
+    E.compute(point);
+
+    // Обновляем консервативные переменные
+    UT[3] = (point.rho[0] + point.rho[1]) * E.fullE();
+    UT[4] = point.rho[0] * E.vE12();
+    UT[5] = point.rho[0] * E.vE3();
+    UE = UT;
+
+    // Обновляем макропараметры
+    pointT = point;
+    pointE = point;
 }
 
-QVector<QVector<double>> MixtureCo2Ar::saveR()
+void StaticCellCO2Ar::initialize(const QString &name)
 {
-    QVector<QVector<double>> table;
-    for (int i = 0; i < SYSTEM_ORDER; ++i)
+    // Подготовка таблиц температур и энергий
+    computeT.readFromFile(name, T_NUM, Y_NUM);
+}
+
+void StaticCellCO2Ar::solve()
+{
+    // Готовим progress bar
+    ProgressBar bar;
+    bar.initialize(MAX_ITERATION_N);
+
+    // Осуществляем итерационный процесс
+    while (currIter < MAX_ITERATION_N)
     {
-        table.push_back(R[i]);
+        // Основное обновление параметров
+        computeR();
+        step();
+
+        // Возврат к основным макропараметрам
+        updateMacroParam();
+        updateTimeScale();
+
+        // Обновляем progress bar, счетчик и таймер
+        bar.update(1.0);
+        ++currIter;
+        time += dt;
+    }
+}
+
+QVector<QVector<double> > StaticCellCO2Ar::saveMacroParams()
+{
+    // Подготовка таблицы
+    QVector<QVector<double>> table;
+    table.resize(9);
+
+    // Заполняем таблицу
+    for (int i = 0; i < MAX_ITERATION_N; ++i)
+    {
+        table[0].push_back(0.0);
+        table[1].push_back(pT[i]);
+        table[2].push_back(TT[i]);
+        table[3].push_back(T12T[i]);
+        table[4].push_back(T3T[i]);
+        table[5].push_back(pE[i]);
+        table[6].push_back(TE[i]);
+        table[7].push_back(T12E[i]);
+        table[8].push_back(T3E[i]);
+    }
+    for (int i = 1; i < MAX_ITERATION_N; ++i)
+    {
+        table[0][i] = table[0][i - 1] + dt;
     }
     return table;
 }
 
+QVector<double> StaticCellCO2Ar::computeR(const MacroParam& point)
+{
+    // Временный выход
+    QVector<double> temp(SYSTEM_ORDER, 0.0);
+
+    // Расчет времен релаксации VT и VV при столкновениях CO2-CO2, CO2-Ar
+    double tauVTCO2 = Mixture::tauVTCO2CO2(point.t, point.rho[0]);
+    double tauVVCO2 = Mixture::tauVVCO2CO2(point.t, point.rho[0]);
+    double tauVTAr = Mixture::tauVTCO2Ar(point.t, point.rho[1]);
+    double tauVVAr = Mixture::tauVVCO2Ar(point.t, point.rho[1]);
+
+    // Расчет значений колебательных энергий
+    EnergyDc et, et12, et3;
+    et.initialize();
+    et12.initialize();
+    et3.initialize();
+    et.compute(point.t, point.t);
+    et12.compute(point.t12, point.t12);
+    et3.compute(point.t3, point.t3);
+
+    // Расчет скоростей релаксации
+    double r12 = point.rho[0] *
+            ((et.vE12() - et12.vE12()) * (1.0 / tauVTCO2 + 1.0 / tauVTAr) +
+             (et3.vE12() - et12.vE12()) * (2.0 / tauVVCO2 + 2.0 / tauVVAr));
+    double r3 = point.rho[0] *
+            (et12.vE3() - et3.vE3()) * (2.0 / tauVVCO2 + 2.0 / tauVVAr);
+
+    // Возвращаем новые значения
+    temp[4] = r12;
+    temp[5] = r3;
+    return temp;
+}
+
+void StaticCellCO2Ar::computeR()
+{
+    RT = computeR(pointT);
+    RE = computeR(pointE);
+}
+
+void StaticCellCO2Ar::step()
+{
+    for (int j = 3; j < SYSTEM_ORDER; ++j)
+    {
+        UT[j] += RT[j] * dt;
+        UE[j] += RE[j] * dt;
+    }
+}
+
+void StaticCellCO2Ar::updateMacroParam()
+{
+    // Изотермическая задача
+    computeT.compute(UT[4] / pointT.rho[0], UT[5] / pointT.rho[0]);
+    pointT.t12 = computeT.T12();
+    pointT.t3 = computeT.T3();
+
+    // Адиабатическая задача
+    computeT.compute(pointE, UE[4] / pointE.rho[0], UE[5] / pointE.rho[0],
+            UE[3] / (pointE.rho[0] + pointE.rho[1]));
+    pointE.t = computeT.T();
+    pointE.t12 = computeT.T12();
+    pointE.t3 = computeT.T3();
+    pointE.p = pointE.t * K_BOLTZMANN * (pointE.rho[0] / Mixture::mass(0) +
+            pointE.rho[1] / Mixture::mass(1));
+}
+
+void StaticCellCO2Ar::updateTimeScale()
+{
+    pT[currIter] = pointT.p;
+    TT[currIter] = pointT.t;
+    T12T[currIter] = pointT.t12;
+    T3T[currIter] = pointT.t3;
+    pE[currIter] = pointE.p;
+    TE[currIter] = pointE.t;
+    T12E[currIter] = pointE.t12;
+    T3E[currIter] = pointE.t3;
+}

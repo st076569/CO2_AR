@@ -702,8 +702,7 @@ void TemperatureNDc::readFromFile(const QString& name, const int& nT,
 void TemperatureNDc::compute(const MacroParam& param, const double& e12,
                              const double& e3, const double& e)
 {
-    calcT12(e12);
-    calcT3(e3);
+    compute(e12, e3);
     calcT(param, e, e12, e3);
 }
 void TemperatureNDc::compute(const MacroParam& param, const double& ev,
@@ -716,9 +715,13 @@ void TemperatureNDc::compute(const MacroParam& param, const double& e)
 {
     calcT(param, e);
 }
+void TemperatureNDc::compute(const double& e12, const double& e3)
+{
+    calcT12(e12);
+    calcT3(e3);
+}
 
-void TemperatureNDc::writeToFile(const QString& name, const int& nT,
-                                 const int& nY)
+void TemperatureNDc::writeToFile(const QString& name)
 {
     // Открываем файл для записи
     QFile file(name);
@@ -726,16 +729,16 @@ void TemperatureNDc::writeToFile(const QString& name, const int& nT,
     QDataStream out(&file);
 
     // Запись таблицы в файл
-    for (int i = 0; i < nT; ++i)
+    for (int i = 0; i < vT_v.size(); ++i)
     {
         out << (double) vT_v[i] << (double) vE12_v[i] << (double) vE3_v[i]
                << (double) vE_v[i];
-        for (int j = 0; j < nY; ++j)
+        for (int j = 0; j < y_v.size(); ++j)
         {
             out << (double) fullE_v[i][j];
         }
     }
-    for (int i = 0; i < nY; ++i)
+    for (int i = 0; i < y_v.size(); ++i)
     {
         out << (double) y_v[i];
     }
@@ -1446,7 +1449,8 @@ void TransportCoefficientsDc::initialize()
 }
 
 // Расчет всех значений
-void TransportCoefficientsDc::compute(const MacroParam& param)
+void TransportCoefficientsDc::compute(const MacroParam& param,
+                                      const int& useBVisc, const int& useDiff)
 {
     // Мольная доля
     QVector<double> n = {param.rho[0] / Mixture::mass(0),
@@ -1474,6 +1478,18 @@ void TransportCoefficientsDc::compute(const MacroParam& param)
 
     // Вычисление коэффициентов переноса
     computeTransport(param.t, nTot, x);
+
+    // Учет диффузии и объемной вязкости
+    for (int i = 0; i < N_SORTS; ++i)
+    {
+        tDiffusion_v[i] *= useDiff;
+        for (int j = 0; j < N_SORTS; ++j)
+        {
+            diffusion_vv[i][j] *= useDiff;
+        }
+    }
+    //bViscosity_s = 100 * sViscosity_s;
+    bViscosity_s *= useBVisc;
 }
 const SpecificHeat& TransportCoefficientsDc::heat() const
 {
@@ -1502,6 +1518,8 @@ void FlowMembers::initialize()
     diffV_v.fill(0.0, N_SORTS);
     d_v.fill(0.0, N_SORTS);
     flow_v.fill(0.0, SYSTEM_ORDER);
+    cFlow_v.fill(0.0, SYSTEM_ORDER);
+    dFlow_v.fill(0.0, SYSTEM_ORDER);
 }
 
 // Доступ к соответствующим полям
@@ -1548,6 +1566,14 @@ const QVector<double> &FlowMembers::d() const
 const QVector<double> &FlowMembers::flow() const
 {
     return flow_v;
+}
+const QVector<double> &FlowMembers::cFlow() const
+{
+    return cFlow_v;
+}
+const QVector<double> &FlowMembers::dFlow() const
+{
+    return dFlow_v;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1608,11 +1634,10 @@ void FlowMembersDc::computeFullQ(const double& dT_dx, const double& dT12_dx,
     vQ3_s = -transport_.vLambdaT3() * dT3_dx;
     fullQ_s = trQ_s + vQ12_s + vQ3_s + diffQ_s + tDiffQ_s;
 }
-void FlowMembersDc::computeXxP(const MacroParam& param, const double& dv_dx,
-                               const int& useBVisc)
+void FlowMembersDc::computeXxP(const MacroParam& param, const double& dv_dx)
 {
     xxP_s = param.p - (4.0 / 3.0 * transport_.sViscosity() +
-                       useBVisc * transport_.bViscosity()) * dv_dx;
+                       transport_.bViscosity()) * dv_dx;
 }
 
 // Выделение памяти, обновление значений
@@ -1630,28 +1655,41 @@ void FlowMembersDc::compute(const MacroParam& param,
                             const double& dT_dx, const double& dlnT_dx,
                             const double& dT12_dx, const double& dT3_dx,
                             const double& dv_dx, const int& useBVisc,
-                            const int& useDiffV)
+                            const int& useDiff)
 {
     // Подготовка данных
     energy_.compute(param);
-    transport_.compute(param);
+    transport_.compute(param, useBVisc, useDiff);
     computeD(param, dx_dx, dlnp_dx);
     computeDiffV(dlnT_dx);
     computeH(param);
     computeDiffQ(param);
     computeTDiffQ(param);
     computeFullQ(dT_dx, dT12_dx, dT3_dx);
-    computeXxP(param, dv_dx, useBVisc);
+    computeXxP(param, dv_dx);
+
+    // Расчет конвективной компоненты
+    cFlow_v[0] = param.rho[0] * param.v;
+    cFlow_v[1] = param.rho[1] * param.v;
+    cFlow_v[2] = (param.rho[0] + param.rho[1]) * qPow(param.v, 2.0) + param.p;
+    cFlow_v[3] = param.v * (param.rho[0] + param.rho[1]) *
+            (energy_.fullE() + qPow(param.v, 2.0) / 2.0) + param.v * param.p;
+    cFlow_v[4] = param.v * param.rho[0] * energy_.vE12();
+    cFlow_v[5] = param.v * param.rho[0] * energy_.vE3();
+
+    // Расчет диффузной компоненты
+    dFlow_v[0] = param.rho[0] * diffV_v[0];
+    dFlow_v[1] = -param.rho[0] * diffV_v[0];
+    dFlow_v[2] = xxP_s - param.p;
+    dFlow_v[3] = fullQ_s + param.v * (xxP_s - param.p);
+    dFlow_v[4] = vQ12_s;
+    dFlow_v[5] = vQ3_s;
 
     // Расчет вектора поточных членов
-    flow_v[0] = param.rho[0] * param.v + useDiffV * param.rho[0] * diffV_v[0];
-    flow_v[1] = param.rho[1] * param.v - useDiffV * param.rho[0] * diffV_v[0];
-    flow_v[2] = (param.rho[0] + param.rho[1]) * qPow(param.v, 2.0) + xxP_s;
-    flow_v[3] = param.v * (param.rho[0] + param.rho[1]) *
-            (energy_.fullE() + qPow(param.v, 2.0) / 2.0) + fullQ_s +
-            param.v * xxP_s;
-    flow_v[4] = param.v * param.rho[0] * energy_.vE12() + vQ12_s;
-    flow_v[5] = param.v * param.rho[0] * energy_.vE3() + vQ3_s;
+    for (int i = 0; i < SYSTEM_ORDER; ++i)
+    {
+        flow_v[i] = cFlow_v[i] + dFlow_v[i];
+    }
 }
 const Energy& FlowMembersDc::energy() const
 {
