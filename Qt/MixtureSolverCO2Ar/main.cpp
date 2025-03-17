@@ -34,10 +34,10 @@ void writeToFile(const QString& path, const QString& name,
 }
 
 // Процедура реализации варьирования параметров
-void computeNE(const QString& path, const QString& name, const double& m,
+void compute(const QString& path, const QString& name, const double& m,
              const double& x_CO2, const int& diffV, const int& bVisc,
              const int& nT, const double& p, const double& T,
-             const double& T12, const double& T3)
+             const double& T12, const double& T3, const int& wt)
 {
     // Предварительная инициализация солвера
     MixtureCo2Ar solver;
@@ -60,12 +60,7 @@ void computeNE(const QString& path, const QString& name, const double& m,
     double dx_0 = gd * K_BOLTZMANN * mp.t / qSqrt(2) / M_PI / qPow(d, 2.0) / mp.p;
     mp.v = m * qSqrt(k * mp.p / rho);
 
-    // Моделирование течения
-    solver.initialize("energy_data_1.dat", dx_0);
-    solver.initialize(mp, nT, bVisc, diffV);
-    solver.solve();
-
-    // Запись данных в файл
+    // Формируем имя файла
     temp1 = name;
     switch (ADMIXTURE)
     {
@@ -105,17 +100,22 @@ void computeNE(const QString& path, const QString& name, const double& m,
     temp1.append(str.setNum(qRound(T12)));
     temp1.append("_T3-");
     temp1.append(str.setNum(qRound(T3)));
-    temp1.append(".csd");
-    writeToFile(path, temp1, solver.saveMacroParams());
+    temp1.append("_WT-");
+    temp1.append(str.setNum(wt));
+
+    // Моделирование течения
+    solver.initialize("energy_data_1.dat", dx_0);
+    solver.initialize(mp, nT, bVisc, diffV);
+    solver.solve(path, temp1, wt);
 
     // Вывод сигнальной информации
     std::cout << "\n\n > File name  [.csd] : " << temp1.toStdString();
     std::cout << "\n > dt           [us] : " << solver.dt * 1e6;
     std::cout << "\n > Time         [us] : " << solver.time * 1e6;
-    std::cout << "\n > Iterations    [-] : " << solver.currIter << " / "
-              << MAX_ITERATION_N << "\n\n";
+    std::cout << "\n\n";
 }
 
+/*
 // Процедура реализации варьирования параметров
 void computeVar(const QString& path, const QString& name,
                 const QVector<double>& m, const QVector<double>& x_CO2,
@@ -133,7 +133,7 @@ void computeVar(const QString& path, const QString& name,
     for (int i7 = 0; i7 < T.size();     ++i7)
     for (int i8 = 0; i8 < T12.size();   ++i8)
     for (int i9 = 0; i9 < T3.size();    ++i9)
-        computeNE(path, name, m[i1], x_CO2[i2], diffV[i3], bVisc[i4], nT[i5],
+        compute(path, name, m[i1], x_CO2[i2], diffV[i3], bVisc[i4], nT[i5],
                   p[i6], T[i7], T12[i8], T3[i9]);
 }
 
@@ -170,11 +170,74 @@ void computeSC(const QString& path, const QString& name, const double& x_CO2,
     writeToFile(path, temp, solver.saveMacroParams());
 
     // Вывод сигнальной информации
-  std::cout << "\n\n > File name  [.tsd] : " << temp.toStdString();
+    std::cout << "\n\n > File name  [.tsd] : " << temp.toStdString();
     std::cout << "\n > dt           [ns] : " << solver.dt * 1e9;
     std::cout << "\n > Time         [us] : " << solver.time * 1e6;
     std::cout << "\n > Iterations    [-] : " << solver.currIter << " / "
               << MAX_ITERATION_N << "\n\n";
+}
+*/
+
+// Процедура реализации варьирования параметров
+void computeSCRelTime(const QString& path, const QString& name,
+                      const double& x_CO2, const double& p,
+                      const QVector<double>& T, const double& T12,
+                      const double& T3, const double& dt)
+{
+    QVector<QVector<double>> table;
+    table.resize(3);
+    QString temp, str;
+
+    for (int i = 0; i < T.size(); ++i)
+    {
+        StaticCellCO2ArRelTime solver;
+        MacroParam mp(p, 0.0, T[i], T12, T3, x_CO2);
+
+        solver.initialize(mp, dt, "energy_data_1.dat");
+        solver.solve();
+
+        table[0].append(T[i]);
+        table[1].append(qPow(T[i], -1.0 / 3.0));
+        table[2].append(solver.TauP);
+    }
+
+    // Запись данных в файл
+    temp = name;
+    switch (ADMIXTURE)
+    {
+        case 0:
+            temp.append("_He");
+        break;
+        case 1:
+            temp.append("_Ne");
+        break;
+        case 2:
+            temp.append("_Ar");
+        break;
+        case 3:
+            temp.append("_Kr");
+        break;
+        case 4:
+            temp.append("_Xe");
+        break;
+        default:
+            temp.append("_Ar");
+    }
+    temp.append("_x-");
+    temp.append(str.setNum(qRound(x_CO2 * 100)));
+    temp.append("_p-");
+    temp.append(str.setNum(qRound(p / 101325)));
+    temp.append("_T12-");
+    temp.append(str.setNum(qRound(T12)));
+    temp.append("_T3-");
+    temp.append(str.setNum(qRound(T3)));
+    temp.append("_dt-");
+    temp.append(str.setNum(qRound(dt * 1e9)));
+    temp.append(".tsd");
+    writeToFile(path, temp, table);
+
+    // Вывод сигнальной информации
+    std::cout << "\n\n > File name [.tsd] : " << temp.toStdString() << "\n\n";
 }
 
 int main(int argc, char *argv[])
@@ -182,19 +245,24 @@ int main(int argc, char *argv[])
     QCoreApplication a(argc, argv);
 
     // Путь сохранения результатов
-    QString path = "./results_2024";
+    QString path = "./results_answer";
 
     // path, name, M, x_CO2, diffV, bVisc, numT, p, T, T12, T3
+    compute(path, "HLL", 5.0, 0.5, 1, 1, 3, 100, 300, 300, 300, 0);
     //computeNE(path, "HLLC", 5.0, 0.5, 1, 1, 3, 100, 300, 300, 300);
     //computeVar(path, "HLLC", {5.0}, {0.5}, {0, 1}, {0, 1}, {3}, {100}, {300}, {300}, {300});
     //computeVar(path, "HLLC", {5.0}, {1e-7, 0.25, 0.75, 1 - 1e-7}, {1}, {1}, {3}, {100}, {300},
     //{300}, {300});
-    computeVar(path, "HLLC", {5.0}, {0.9999}, {0}, {1}, {3}, {100}, {300}, {300}, {300});
+    //computeVar(path, "HLLC", {5.0}, {0.9999}, {0}, {1}, {3}, {100}, {300}, {300}, {300});
     //computeVar(path, "HLLC", {5.0}, {1e-6, 0.25, 0.75, 1 - 1e-6}, {1}, {1}, {3}, {100}, {300},
     //{300}, {300});
 
     // path, name, x_CO2, p, T, T12, T3, dt
     //computeSC(path, "SC", 0.999999, 80, 1800, 2000, 2000, 1e-6);
+
+    //QVector<double> t = {300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200,
+    //                     1300, 1400, 1500, 1600, 1700, 1800, 1900, 2000, 2100};
+    //computeSCRelTime(path, "SCRT", 0.6, 101325, t, 220, 220, 1e-9);
 
     // Запись таблицы энергий в файл
     //TemperatureNDc computeT;

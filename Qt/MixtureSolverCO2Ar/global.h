@@ -12,6 +12,10 @@
 #include <QtConcurrent>
 #include <iostream>
 
+#include <QFile>
+#include <QTextStream>
+#include <QString>
+
 // Настройка температурного диапазона
 #define T_MAX 5000.0
 #define T_MIN 200.0
@@ -23,11 +27,14 @@
 
 // Число итераций, положение разрыва, число Куранта
 #define RELATIVE_SHOCK_POSITION 0.001
-#define MAX_ITERATION_N 20000
+#define MAX_ITERATION_N 1
+#define WRITE_ITERATION 0
+#define SKIP_ITERATION 1
 #define CFL 0.9
 
 // Параметр химической добавки в смеси {0-He', 1-Ne', 2-Ar', 3-Kr, 4-Xe}
-#define ADMIXTURE 2
+#define ADMIXTURE 0
+#define USE_FICK 1
 
 // Параметры сетки решателя
 #define GRID_N 101

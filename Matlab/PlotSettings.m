@@ -15,7 +15,7 @@ classdef PlotSettings
         LineWidth = 1;
         FontName = 'default';
         FontSize = 8;
-        Position = [2, 2, 8.5, 7];
+        Position = [2, 2, 8.0139, 6.2739];
         Units = "centimeters";
         LabelX = '$\overline{x}$';
         LabelY = {'Temperature, K', ...
@@ -42,7 +42,7 @@ classdef PlotSettings
             fig = gcf;
             print(fig, obj.Path{2} + "/png/" + name, '-dpng', '-r600')
             print(fig, obj.Path{2} + "/eps/" + name, '-depsc', '-tiff')
-            close(fig)
+            %close(fig)
 %             set(fig, 'Units', 'centimeters');
 %             set(fig, 'PaperPosition', [0, 0, fig.Position(3:4)], ...
 %                 'PaperSize', fig.Position(3:4));
@@ -213,7 +213,7 @@ classdef PlotSettings
                 leg = cat(2, leg, strcat('$', legendNames{i}, '$'));
             end
             obj.PlotFig(position, x, y, obj.Color(col), lst, ...
-                titleName, obj.LabelY{9}, leg, 1, 'northoutside');
+                titleName, obj.LabelY{9}, leg, 1, 'ne');
             obj.SaveFig(strcat(saveName,'-Pxx'));
         end
         function PlotFigX(obj, fileNames, legendNames, titleName, saveName, position)
@@ -228,7 +228,7 @@ classdef PlotSettings
             end
             for i = 1:1:size(fileNames, 2) 
                 x = cat(2, x, data{i}(obj.XRange, 3));
-                y = cat(2, y, 100 * (data{i}(obj.XRange, 6) - data{i}(1, 6)));
+                y = cat(2, y, 100 * (data{i}(obj.XRange, 6) - data{i}(1, 6)) / data{i}(1, 6));
                 col = cat(2, col, i);
                 lst = cat(2, lst, '-');
                 leg = cat(2, leg, strcat('$', legendNames{i}, '$'));

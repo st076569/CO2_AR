@@ -155,6 +155,7 @@ void MixtureCo2Ar::initialize(const QString& name, const double& init_dx)
     a.fill(0.0, GRID_N);
     dx.fill(0.0, GRID_N);
     freeLength.fill(0.0, GRID_N);
+    timeLine.fill(0.0, WRITE_ITERATION);
     diffVCO2.fill(0.0, GRID_N);
     diffVAr.fill(0.0, GRID_N);
     diffCO2.fill(0.0, GRID_N);
@@ -252,25 +253,25 @@ void MixtureCo2Ar::initialize(const MacroParam& lP, const int& numT,
     tempU = U;
 }
 
-void MixtureCo2Ar::solve()
+void MixtureCo2Ar::solve(const QString& path, const QString& name,
+                         const int& wt)
 {
     // Готовим progress bar
     ProgressBar bar;
+    std::cout << "\n\n Preparing SW:\n\n";
     bar.initialize(MAX_ITERATION_N);
 
-    // Осуществляем итерационный процесс
+    // Осуществляем итерационный процесс (формируем УВ)
     while (currIter < MAX_ITERATION_N)
     {
         // Обновляем показатель адиабаты, скорость звука, временной шаг
         updateAK();
         updateDt();
 
-        // Вычисляем вектор поточных и релаксационных членов + HLLE
+        // Вычисляем вектор поточных и релаксационных членов
         computeR();
         computeF();
-        //computeHlleF();
-        computeHllcF();
-        //computeHllF();
+        computeHllF();
 
         // Обновляем вектор консервативных переменных
         step();
@@ -283,8 +284,103 @@ void MixtureCo2Ar::solve()
         ++currIter;
         time += dt;
     }
+
+    // Сохранение последнего состояния
+    saveMacroParams(path, name, 0);
+
+    // Переход в систему отсчета трубы
+    transformToRigidCS();
+    updateU();
+
+    // Обновление счетчика
+    currIter = 0;
+    //time = 0;
+    std::cout << "\n\n Computing SW Reflection:\n\n";
+    bar.initialize(WRITE_ITERATION * SKIP_ITERATION);
+
+    // Осуществляем итерационный процесс (отражение УВ)
+    for (int i = 0; i < WRITE_ITERATION; i++)
+    {
+        // Запись данных в файл
+        timeLine[i] = time;
+        saveMacroParams(path, name, i + 1);
+
+        // Итерационный процесс между моментами записи
+        for (int j = 0; j < SKIP_ITERATION; j++)
+        {
+            // Обновляем показатель адиабаты, скорость звука, временной шаг
+            updateAK();
+            updateDt();
+
+            // Вычисляем вектор поточных и релаксационных членов
+            computeR();
+            computeF();
+            computeHllF();
+
+            // Обновляем вектор консервативных переменных
+            step();
+
+            // Возврат к основным макропараметрам
+            updateMacroParam();
+            heatCondWall(wt);
+
+            // Обновляем progress bar, счетчик и таймер
+            bar.update(1.0);
+            ++currIter;
+            time += dt;
+        }
+    }
     updateAK();
-    findShockPos();
+    saveTimeLine(path, name);
+}
+
+void MixtureCo2Ar::heatCondWall(const int& wt)
+{
+    double t = points[0].t;
+
+    // Краевое условие в стандартных переменных
+    switch (wt)
+    {
+        // Нетеплопроводная стенка
+        case 0:
+            points[0] = points[1];
+            points[0].v = 0.0;
+        break;
+
+        // Идеально теплопроводная стенка
+        case 1:
+            points[0] = points[1];
+            points[0].t = t;
+        break;
+
+        // Нетеплопроводная стенка
+        default:
+            points[0] = points[1];
+            points[0].v = 0.0;
+    }
+
+    // Расчет энергий
+    EnergyDc en;
+    en.initialize();
+
+    // Пересчет консервативных переменных
+    en.compute(points[0]);
+    U[0][0] = points[0].rho[0];
+    U[1][0] = points[0].rho[1];
+    U[2][0] = (points[0].rho[0] + points[0].rho[1]) * points[0].v;
+    U[3][0] = (points[0].rho[0] + points[0].rho[1]) *
+            (en.fullE() + qPow(points[0].v, 2.0) / 2.0);
+    U[4][0] = points[0].rho[0] * en.vE12();
+    U[5][0] = points[0].rho[0] * en.vE3();
+}
+
+void MixtureCo2Ar::transformToRigidCS()
+{
+    // Пересчет скоростей потока во всех точках
+    for (int i = GRID_N - 1; i >= 0; i--)
+    {
+        points[i].v -= points[0].v;
+    }
 }
 
 void MixtureCo2Ar::computeF()
@@ -328,6 +424,10 @@ void MixtureCo2Ar::computeF()
                               n0[1] / (n0[0] + n0[1])};
         QVector<double> x2 = {n2[0] / (n2[0] + n2[1]),
                               n2[1] / (n2[0] + n2[1])};
+        //QVector<double> y0 = {p0.rho[0] / (p0.rho[0] + p0.rho[1]),
+        //                      p0.rho[1] / (p0.rho[0] + p0.rho[1])};
+        //QVector<double> y2 = {p2.rho[0] / (p2.rho[0] + p2.rho[1]),
+        //                      p2.rho[1] / (p2.rho[0] + p2.rho[1])};
 
         // Рассчитываем производные в точке i
         double dv_dx = (p2.v - p0.v) / temp_dx;
@@ -338,12 +438,14 @@ void MixtureCo2Ar::computeF()
         double dlnp_dx = (qLn(p2.p) - qLn(p0.p)) / temp_dx;
         QVector<double> dx_dx = {(x2[0] - x0[0]) / temp_dx,
                                  (x2[1] - x0[1]) / temp_dx};
+        //QVector<double> dy_dx = {(y2[0] - y0[0]) / temp_dx,
+        //                         (y2[1] - y0[1]) / temp_dx};
 
         // Расчет поточных членов
         FlowMembersDc computer;
         computer.initialize();
-        computer.compute(p1, dx_dx, dlnp_dx, dT_dx, dlnT_dx, dT12_dx, dT3_dx,
-                         dv_dx, useBVisc, useDiffV);
+        computer.compute(p1, dx_dx, dlnp_dx, dT_dx, dlnT_dx, dT12_dx,
+                         dT3_dx, dv_dx, useBVisc, useDiffV);
 
         // Обновляем значения векторов в (.) [i]
         mutex.lock();
@@ -695,6 +797,26 @@ void MixtureCo2Ar::updateMacroParam()
     }
 }
 
+void MixtureCo2Ar::updateU()
+{
+    // Расчет энергий
+    EnergyDc en;
+    en.initialize();
+
+    // Пересчет консервативных переменных
+    for (int i = 0; i < GRID_N; i++)
+    {
+        en.compute(points[i]);
+        U[0][i] = points[i].rho[0];
+        U[1][i] = points[i].rho[1];
+        U[2][i] = (points[i].rho[0] + points[i].rho[1]) * points[i].v;
+        U[3][i] = (points[i].rho[0] + points[i].rho[1]) *
+                (en.fullE() + qPow(points[i].v, 2.0) / 2.0);
+        U[4][i] = points[i].rho[0] * en.vE12();
+        U[5][i] = points[i].rho[0] * en.vE3();
+    }
+}
+
 void MixtureCo2Ar::updateAK()
 {
     QFutureWatcher<void> futureWatcher;
@@ -828,7 +950,7 @@ void MixtureCo2Ar::updateFreeLength()
     }
 }
 
-QVector<QVector<double>> MixtureCo2Ar::saveMacroParams()
+QVector<QVector<double>> MixtureCo2Ar::getMacroParams()
 {
     // Поиск длины свободного пробега
     updateFreeLength();
@@ -913,6 +1035,80 @@ void MixtureCo2Ar::updateRightBC()
     U[0][GRID_N - 1] = (bc.rP().rho[0] + bc.rP().rho[1]) /
             (U[0][GRID_N - 2] + U[1][GRID_N - 2]) * U[0][GRID_N - 2];
     U[1][GRID_N - 1] = bc.rP().rho[0] + bc.rP().rho[1] - U[0][GRID_N - 1];
+}
+
+void MixtureCo2Ar::writeToFile(const QString& path, const QString& name,
+                               const QVector<QVector<double>>& table)
+{
+    // Открываем файл для записи
+    QFile file1(path + "/" + name);
+    file1.open(QIODevice::WriteOnly | QIODevice::Text);
+    QTextStream out1(&file1);
+
+    // Настройка параметров вывода
+    out1.setFieldWidth(16);
+    out1.setRealNumberPrecision(8);
+    out1.setRealNumberNotation(QTextStream::ScientificNotation);
+
+    // Запись таблицы в файл
+    for (int i = 0; i < table[0].size(); ++i)
+    {
+        for (int j = 0; j < table.size(); ++j)
+        {
+            out1 << table[j][i];
+        }
+        out1 << '\n';
+    }
+
+    // Закрытие файла
+    file1.close();
+}
+
+void MixtureCo2Ar::writeToFile(const QString& path, const QString& name,
+                               const QVector<double>& vector)
+{
+    // Открываем файл для записи
+    QFile file1(path + "/" + name);
+    file1.open(QIODevice::WriteOnly | QIODevice::Text);
+    QTextStream out1(&file1);
+
+    // Настройка параметров вывода
+    out1.setFieldWidth(16);
+    out1.setRealNumberPrecision(8);
+    out1.setRealNumberNotation(QTextStream::ScientificNotation);
+
+    // Запись таблицы в файл
+    for (int i = 0; i < vector.size(); ++i)
+    {
+        out1 << vector[i];
+        out1 << '\n';
+    }
+
+    // Закрытие файла
+    file1.close();
+}
+
+void MixtureCo2Ar::saveMacroParams(const QString& path, const QString& name,
+                                   const int& iter)
+{
+    QString temp, str;
+    temp = name;
+
+    temp.append("_");
+    temp.append(str.setNum(iter));
+    temp.append(".csd");
+
+    writeToFile(path, temp, getMacroParams());
+}
+
+void MixtureCo2Ar::saveTimeLine(const QString& path, const QString& name)
+{
+    QString temp;
+
+    temp = name;
+    temp.append(".tml");
+
+    writeToFile(path, temp, timeLine);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1089,4 +1285,118 @@ void StaticCellCO2Ar::updateTimeScale()
     TE[currIter] = pointE.t;
     T12E[currIter] = pointE.t12;
     T3E[currIter] = pointE.t3;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+/// class StaticCellCO2ArRelTime
+///////////////////////////////////////////////////////////////////////////////
+
+StaticCellCO2ArRelTime::StaticCellCO2ArRelTime()
+{
+    UT.fill(0.0, SYSTEM_ORDER);
+    RT.fill(0.0, SYSTEM_ORDER);
+}
+
+void StaticCellCO2ArRelTime::initialize(const MacroParam &point,
+                                        const double &dt, const QString &name)
+{
+    // Подготовка таблиц температур и энергий
+    computeT.readFromFile(name, T_NUM, Y_NUM);
+
+    // Повторное использование
+    this->dt = dt;
+    time = 0.0;
+    TauP = 0.0;
+
+    // Расчет энергий
+    EnergyDc E, E1;
+    E.initialize();
+    E.compute(point);
+    E1.initialize();
+    E1.compute(point.t, point.t);
+
+    // Обновляем консервативные переменные
+    UT[3] = (point.rho[0] + point.rho[1]) * E.fullE();
+    UT[4] = point.rho[0] * E.vE12();
+    UT[5] = point.rho[0] * E.vE3();
+
+    // Обновляем макропараметры
+    pointT = point;
+    vE = E.vE12() + E.vE3();
+    vEMax = 1.0 / M_E * vE + (1.0 - 1.0 / M_E) * (E1.vE12() + E1.vE3());
+}
+
+void StaticCellCO2ArRelTime::solve()
+{
+    // Осуществляем итерационный процесс
+    while (vE < vEMax)
+    {
+        // Основное обновление параметров
+        computeR();
+        step();
+
+        // Возврат к основным макропараметрам
+        updateMacroParam();
+
+        // Обновляем progress bar, счетчик и таймер
+        time += dt;
+    }
+
+    // Обновляем TauP
+    TauP = time * pointT.p / 101325;
+}
+
+QVector<double> StaticCellCO2ArRelTime::computeR(const MacroParam& point)
+{
+    // Временный выход
+    QVector<double> temp(SYSTEM_ORDER, 0.0);
+
+    // Расчет времен релаксации VT и VV при столкновениях CO2-CO2, CO2-Ar
+    double tauVTCO2 = Mixture::tauVTCO2CO2(point.t, point.rho[0]);
+    double tauVVCO2 = Mixture::tauVVCO2CO2(point.t, point.rho[0]);
+    double tauVTAr = Mixture::tauVTCO2Ar(point.t, point.rho[1]);
+    double tauVVAr = Mixture::tauVVCO2Ar(point.t, point.rho[1]);
+
+    // Расчет значений колебательных энергий
+    EnergyDc et, et12, et3;
+    et.initialize();
+    et12.initialize();
+    et3.initialize();
+    et.compute(point.t, point.t);
+    et12.compute(point.t12, point.t12);
+    et3.compute(point.t3, point.t3);
+
+    // Расчет скоростей релаксации
+    double r12 = point.rho[0] *
+            ((et.vE12() - et12.vE12()) * (1.0 / tauVTCO2 + 1.0 / tauVTAr) +
+             (et3.vE12() - et12.vE12()) * (2.0 / tauVVCO2 + 2.0 / tauVVAr));
+    double r3 = point.rho[0] *
+            (et12.vE3() - et3.vE3()) * (2.0 / tauVVCO2 + 2.0 / tauVVAr);
+
+    // Возвращаем новые значения
+    temp[4] = r12;
+    temp[5] = r3;
+    return temp;
+}
+
+void StaticCellCO2ArRelTime::computeR()
+{
+    RT = computeR(pointT);
+}
+
+void StaticCellCO2ArRelTime::step()
+{
+    for (int j = 3; j < SYSTEM_ORDER; ++j)
+    {
+        UT[j] += RT[j] * dt;
+    }
+}
+
+void StaticCellCO2ArRelTime::updateMacroParam()
+{
+    // Изотермическая задача
+    computeT.compute(UT[4] / pointT.rho[0], UT[5] / pointT.rho[0]);
+    pointT.t12 = computeT.T12();
+    pointT.t3 = computeT.T3();
+    vE = (UT[4] + UT[5]) / pointT.rho[0];
 }

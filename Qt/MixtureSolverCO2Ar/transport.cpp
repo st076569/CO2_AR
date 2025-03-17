@@ -1026,10 +1026,13 @@ void TransportCoefficients::initialize()
 
     // Выделение памяти и обнуление значений
     diffusion_vv.resize(N_SORTS);
+    binaryDiffusion_vv.resize(N_SORTS);
     tDiffusion_v.fill(0.0, N_SORTS);
+    eDiffusion_v.fill(0.0, N_SORTS);
     for (int i = 0; i < N_SORTS; ++i)
     {
         diffusion_vv[i].fill(0.0, N_SORTS);
+        binaryDiffusion_vv[i].fill(0.0, N_SORTS);
     }
 }
 
@@ -1066,9 +1069,17 @@ const QVector<QVector<double>>& TransportCoefficients::diffusion() const
 {
     return diffusion_vv;
 }
+const QVector<QVector<double>>& TransportCoefficients::binaryDiffusion() const
+{
+    return binaryDiffusion_vv;
+}
 const QVector<double>& TransportCoefficients::tDiffusion() const
 {
     return tDiffusion_v;
+}
+const QVector<double>& TransportCoefficients::eDiffusion() const
+{
+    return eDiffusion_v;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1390,6 +1401,31 @@ void TransportCoefficientsDc::computeTransport(const double& t,
         }
     }
 
+    // Коэффициенты бинарной диффузии
+    for (int i = 0; i < N_SORTS; ++i)
+    {
+        for (int j = 0; j < N_SORTS; ++j)
+        {
+            binaryDiffusion_vv[i][j] = 3.0 * K_BOLTZMANN * t /
+                    16.0 / nTot / Mixture::reducedMass(i, j) /
+                    bracket_.omega().omega11()[i][j];
+        }
+    }
+
+    // Коэффициенты эффективной диффузии
+    for (int i = 0; i < N_SORTS; ++i)
+    {
+        //eDiffusion_v[i] = (1.0 - x[i]) / (x[0] / binaryDiffusion_vv[i][0] +
+        //        x[1] / binaryDiffusion_vv[i][1]);
+
+        eDiffusion_v[0] = (1.0 - x[0] * Mixture::mass(i) /
+                (x[0] * Mixture::mass(0) + x[1] * Mixture::mass(1))) /
+                (x[1] / binaryDiffusion_vv[0][1]);
+        eDiffusion_v[1] = (1.0 - x[1] * Mixture::mass(i) /
+                (x[0] * Mixture::mass(0) + x[1] * Mixture::mass(1))) /
+                (x[0] / binaryDiffusion_vv[1][0]);
+    }
+
     // Сдвиговая и объемная вязкости
     sViscosity_s = 0.0;
     for (int i = 0; i < N_SORTS; ++i)
@@ -1593,14 +1629,30 @@ void FlowMembersDc::computeD(const MacroParam& param,
                 (param.rho[0] + param.rho[1])) * dlnp_dx;
     }
 }
-void FlowMembersDc::computeDiffV(const double& dlnT_dx)
+void FlowMembersDc::computeDiffV(const MacroParam& param,
+                                 const double& dlnT_dx)
 {
-    for (int i = 0; i < N_SORTS; ++i)
+    if (USE_FICK)
     {
-        diffV_v[i] -= transport_.tDiffusion()[i] * dlnT_dx;
-        for (int j = 0; j < N_SORTS; ++j)
+        QVector<double> n = {param.rho[0] / Mixture::mass(0),
+                             param.rho[1] / Mixture::mass(1)};
+        for (int i = 0; i < N_SORTS; ++i)
         {
-            diffV_v[i] -= transport_.diffusion()[i][j] * d_v[j];
+            //diffV_v[i] = -(param.rho[0] + param.rho[1]) / param.rho[i] *
+            //        transport_.eDiffusion()[i] * dy_dx[i];
+            diffV_v[i] = -(n[0] + n[1]) / n[i] *
+                    transport_.eDiffusion()[i] * d_v[i];
+        }
+    }
+    else
+    {
+        for (int i = 0; i < N_SORTS; ++i)
+        {
+            diffV_v[i] -= transport_.tDiffusion()[i] * dlnT_dx;
+            for (int j = 0; j < N_SORTS; ++j)
+            {
+                diffV_v[i] -= transport_.diffusion()[i][j] * d_v[j];
+            }
         }
     }
 }
@@ -1661,7 +1713,7 @@ void FlowMembersDc::compute(const MacroParam& param,
     energy_.compute(param);
     transport_.compute(param, useBVisc, useDiff);
     computeD(param, dx_dx, dlnp_dx);
-    computeDiffV(dlnT_dx);
+    computeDiffV(param, dlnT_dx);
     computeH(param);
     computeDiffQ(param);
     computeTDiffQ(param);

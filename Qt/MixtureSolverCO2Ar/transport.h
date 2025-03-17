@@ -409,8 +409,14 @@ protected:
     // Коэффициенты диффузии (11, 12; 21, 22)
     QVector<QVector<double>> diffusion_vv;
 
+    // Коэффициенты бинарной диффузии
+    QVector<QVector<double>> binaryDiffusion_vv;
+
     // Коэффициенты термодиффузии (1, 2)
     QVector<double> tDiffusion_v;
+
+    // Коэффициенты эффективной диффузии (1, 2)
+    QVector<double> eDiffusion_v;
 
 public:
 
@@ -434,7 +440,9 @@ public:
     const double& vLambdaT12() const;
     const double& vLambdaT3() const;
     const QVector<QVector<double>>& diffusion() const;
+    const QVector<QVector<double>>& binaryDiffusion() const;
     const QVector<double>& tDiffusion() const;
+    const QVector<double>& eDiffusion() const;
 };
 
 /// TransportCoefficientsDc (Direct Computation) - дочерний класс, производит
@@ -571,7 +579,7 @@ protected:
     // Расчет соответствующих потоков энергии, энтальпии, компоненты тензора
     void computeD(const MacroParam& param, const QVector<double>& dx_dx,
                   const double& dlnp_dx);
-    void computeDiffV(const double& dlnT_dx);
+    void computeDiffV(const MacroParam& param, const double& dlnT_dx);
     void computeH(const MacroParam& param);
     void computeDiffQ(const MacroParam& param);
     void computeTDiffQ(const MacroParam& param);

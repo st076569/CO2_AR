@@ -79,9 +79,20 @@ public:
     void initialize(const MacroParam& lP, const int& numT = 3,
                     const int& useBVisc = 1, const int& useDiffV = 1);
     void initialize(const QString& name, const double& init_dx);
-    void solve();
+    void solve(const QString& path, const QString& name, const int& wt);
 
-    QVector<QVector<double>> saveMacroParams();
+    QVector<QVector<double>> getMacroParams();
+
+    // Процедура сохранения массива в файл
+    void writeToFile(const QString& path, const QString& name,
+                     const QVector<QVector<double>>& table);
+    void writeToFile(const QString& path, const QString& name,
+                     const QVector<double>& vector);
+
+    // Сохранение данных в текстовый файл
+    void saveMacroParams(const QString& path, const QString& name,
+                         const int& iter);
+    void saveTimeLine(const QString& path, const QString& name);
 
 private:
 
@@ -96,7 +107,7 @@ private:
     QVector<MacroParam> points;
 
     // Скорость звука, показатель адиабаты, длины ячеек...
-    QVector<double> a, k, dx, freeLength;
+    QVector<double> a, k, dx, freeLength, timeLine;
     QVector<double> trQ, vQ12, vQ3, diffQ, tDiffQ, sVisc, bVisc, xxP;
     QVector<double> eFull, eT12, eT3;
     QVector<double> diffVCO2, diffVAr, diffCO2, diffAr, diffCO2Ar, tDiffCO2, tDiffAr;
@@ -109,6 +120,12 @@ private:
     QVector<QVector<double>> cHllF, dHllF;
 
 private:
+
+    // Пересчет краевого условия на нетеплопроводной стенке
+    void heatCondWall(const int& wt);
+
+    // Переходим в систему координат, связанную с трубой
+    void transformToRigidCS();
 
     // Расчет вектора потоков во всех ячейках
     void computeF();
@@ -130,6 +147,9 @@ private:
 
     // Возврат к макропараметрам Ui -> points
     void updateMacroParam();
+
+    // Консервативным переменным points -> Ui
+    void updateU();
 
     // Расчет показателей адиабаты 'k' и скоростей звука 'a'
     void updateAK();
@@ -202,6 +222,55 @@ private:
 
     // Обновляет значения во временном масштабе
     void updateTimeScale();
+};
+
+/// StaticCellCO2ArRelTime - предоставляет инструменты для
+/// решения задачи о релаксационных процессах в статической
+/// изотермической ячейке
+class StaticCellCO2ArRelTime
+{
+public:
+
+    // Шаг по времени, время моделирования
+    double dt, time;
+
+    // Время общей релаксации (сек) * давление (атм)
+    double TauP;
+
+public:
+
+    StaticCellCO2ArRelTime();
+    void initialize(const MacroParam& point,
+                    const double& dt, const QString &name);
+    void solve();
+
+    QVector<QVector<double>> saveMacroParams();
+
+private:
+
+    // Вспомогательные структуры
+    TemperatureNDc computeT;
+
+    // Все макропараметры изотермической и адиабатической ячеек
+    MacroParam pointT;
+
+    // Консервативные переменные
+    QVector<double> UT, RT;
+
+    // Текущая полная колебательная энергия
+    double vE, vEMax;
+
+private:
+
+    // Расчет релаксационных членов
+    void computeR();
+    QVector<double> computeR(const MacroParam& point);
+
+    // Производит один шаг итерационного процесса
+    void step();
+
+    // Возврат к макропараметрам Ui -> points
+    void updateMacroParam();
 };
 
 #endif // MIXTURECO2AR_H
